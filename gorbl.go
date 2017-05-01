@@ -39,6 +39,9 @@ type Result struct {
 	Address string `json:"address"`
 	// Listed indicates whether or not the IP was on the RBL
 	Listed bool `json:"listed"`
+    // If the IP was listed, what address was returned?
+    // RBL lists sometimes use the returned IP to indicate why it was listed.
+    ListedAddress string `json:"listed_address"`
 	// RBL lists sometimes add extra information as a TXT record
 	// if any info is present, it will be stored here.
 	Text string `json:"text"`
@@ -66,46 +69,66 @@ func Reverse(ip net.IP) string {
 	return ""
 }
 
-func query(rbl string, host string, r *Result) {
-	r.Listed = false
+func query(rbl string, ip net.IP, lookupTxt bool) []Result {
+    ret := []Result{}
 
-	lookup := fmt.Sprintf("%s.%s", host, rbl)
+	lookup := fmt.Sprintf("%s.%s", Reverse(ip), rbl)
 
-	res, err := net.LookupHost(lookup)
-	if len(res) > 0 {
-		r.Listed = true
-		txt, _ := net.LookupTXT(lookup)
-		if len(txt) > 0 {
-			r.Text = txt[0]
-		}
-	}
-	if err != nil {
-		r.Error = true
-		r.ErrorType = err
-	}
+	addrs, err := net.LookupHost(lookup)
 
-	return
+    if len(addrs) < 1 {
+        ret = append(ret, Result{
+            Address: ip.String(),
+            Listed: false,
+        })
+
+        if err != nil {
+            ret[0].Error = true
+            ret[0].ErrorType = err
+        }
+
+        return ret
+    }
+
+    for _, addr := range addrs {
+        r := Result{
+            Address: ip.String(),
+            Listed: true,
+            ListedAddress: addr,
+        }
+
+        if lookupTxt {
+            txt, _ := net.LookupTXT(lookup)
+
+            if len(txt) > 0 {
+                r.Text = txt[0]
+            }
+        }
+
+        if err != nil {
+            r.Error = true
+            r.ErrorType = err
+        }
+
+        ret = append(ret, r)
+    }
+
+	return ret
 }
 
 /*
 Lookup performs the search and returns the RBLResults
 */
-func Lookup(rblList string, targetHost string) (r RBLResults) {
+func Lookup(rblList string, targetHost string, lookupTxt bool) (r RBLResults) {
 	r.List = rblList
 	r.Host = targetHost
 
 	if ip, err := net.LookupIP(targetHost); err == nil {
 		for _, addr := range ip {
 			if addr.To4() != nil {
-				res := Result{}
-				res.Address = addr.String()
+                qResults := query(rblList, addr, lookupTxt)
 
-				addr := Reverse(addr)
-
-				query(rblList, addr, &res)
-
-				r.Results = append(r.Results, res)
-
+				r.Results = append(r.Results, qResults...)
 			}
 		}
 	}

@@ -20,7 +20,7 @@ func TestReverseIP(t *testing.T) {
 func TestLookupParams(t *testing.T) {
 	t.Parallel()
 
-	res := Lookup("b.barracudacentral.org", "smtp.gmail.com")
+	res := Lookup("b.barracudacentral.org", "smtp.gmail.com", true)
 
 	if res.List != "b.barracudacentral.org" {
 		t.Errorf("Expected b.barracudacentral.org, actual ", res.List)
