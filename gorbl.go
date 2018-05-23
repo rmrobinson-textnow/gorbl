@@ -17,7 +17,22 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"golang.org/x/net/context"
 )
+
+/*
+RBL contains the lookup parameters for this blacklist.
+*/
+type RBL struct {
+	// hostname is the DNS base to perform lookups against.
+	hostname string
+	// lookupTXT dictates whether we will also perform a TXT lookup for this blacklist.
+	lookupTxt bool
+
+	// resolver is an internal DNS resolver we will use (allowing for context to be passed to DNS lookups).
+	resolver *net.Resolver
+}
 
 /*
 RBLResults holds the results of the lookup.
@@ -39,9 +54,9 @@ type Result struct {
 	Address string `json:"address"`
 	// Listed indicates whether or not the IP was on the RBL
 	Listed bool `json:"listed"`
-    // If the IP was listed, what address was returned?
-    // RBL lists sometimes use the returned IP to indicate why it was listed.
-    ListedAddress string `json:"listed_address"`
+	// If the IP was listed, what address was returned?
+	// RBL lists sometimes use the returned IP to indicate why it was listed.
+	ListedAddress string `json:"listed_address"`
 	// RBL lists sometimes add extra information as a TXT record
 	// if any info is present, it will be stored here.
 	Text string `json:"text"`
@@ -50,6 +65,15 @@ type Result struct {
 	Error bool `json:"error"`
 	// ErrorType is the type of error encountered if any
 	ErrorType error `json:"error_type"`
+}
+
+// NewRBL creates a new RBL struct with the specified hostname and TXT lookup behaviour.
+func NewRBL(hostname string, lookupTxt bool) *RBL {
+	return &RBL{
+		hostname:  hostname,
+		lookupTxt: lookupTxt,
+		resolver:  &net.Resolver{},
+	}
 }
 
 /*
@@ -69,68 +93,84 @@ func Reverse(ip net.IP) string {
 	return ""
 }
 
-func query(rbl string, ip net.IP, lookupTxt bool) []Result {
-    ret := []Result{}
+/**
+LookupIP looks up the specified IP in the RBL and returns its response.
+ */
+func (r *RBL) LookupIP(ctx context.Context, ip net.IP) RBLResults {
+	ret := RBLResults{
+		Host:    ip.String(),
+		List:    r.hostname,
+		Results: []Result{},
+	}
 
-	lookup := fmt.Sprintf("%s.%s", Reverse(ip), rbl)
+	ipHostname := fmt.Sprintf("%s.%s", Reverse(ip), r.hostname)
 
-	addrs, err := net.LookupHost(lookup)
+	addrs, err := r.resolver.LookupHost(ctx, ipHostname)
 
-    if len(addrs) < 1 {
-        ret = append(ret, Result{
-            Address: ip.String(),
-            Listed: false,
-        })
+	if len(addrs) < 1 {
+		res := Result{
+			Address: ip.String(),
+			Listed:  false,
+		}
 
-        if err != nil {
-            ret[0].Error = true
-            ret[0].ErrorType = err
-        }
+		if err != nil {
+			res.Error = true
+			res.ErrorType = err
+		}
 
-        return ret
-    }
+		ret.Results = append(ret.Results, res)
+		return ret
+	}
 
-    for _, addr := range addrs {
-        r := Result{
-            Address: ip.String(),
-            Listed: true,
-            ListedAddress: addr,
-        }
+	// For every IP address we get back the RBL IP lookup, we perform an optional TXT lookup.
+	for _, addr := range addrs {
+		res := Result{
+			Address:       ip.String(),
+			Listed:        true,
+			ListedAddress: addr,
+		}
 
-        if lookupTxt {
-            txt, _ := net.LookupTXT(lookup)
+		if r.lookupTxt {
+			txt, _ := r.resolver.LookupTXT(ctx, ipHostname)
 
-            if len(txt) > 0 {
-                r.Text = txt[0]
-            }
-        }
+			// We skip both empty results and errors.
+			if len(txt) > 0 {
+				res.Text = txt[0]
+			}
+		}
 
-        if err != nil {
-            r.Error = true
-            r.ErrorType = err
-        }
+		if err != nil {
+			res.Error = true
+			res.ErrorType = err
+		}
 
-        ret = append(ret, r)
-    }
+		ret.Results = append(ret.Results, res)
+	}
 
 	return ret
 }
 
 /*
-Lookup performs the search and returns the RBLResults
+Lookup performs a search for IPs tied to the specified hostname and returns the response.
 */
-func Lookup(rblList string, targetHost string, lookupTxt bool) (r RBLResults) {
-	r.List = rblList
-	r.Host = targetHost
+func (r *RBL) Lookup(ctx context.Context, targetHost string) RBLResults {
+	ret := RBLResults{
+		Host:    targetHost,
+		List:    r.hostname,
+		Results: []Result{},
+	}
 
-	if ip, err := net.LookupIP(targetHost); err == nil {
-		for _, addr := range ip {
-			if addr.To4() != nil {
-                qResults := query(rblList, addr, lookupTxt)
+	// Find all IP addresses associated with the supplied hostname.
+	if addrs, err := r.resolver.LookupIPAddr(ctx, targetHost); err == nil {
+		for _, addr := range addrs {
+			// For every valid IPv4 address tied to this hostname, we perform an RBL lookup.
+			if addr.IP.To4() != nil {
+				qResults := r.LookupIP(ctx, addr.IP)
 
-				r.Results = append(r.Results, qResults...)
+				ret.Results = append(ret.Results, qResults.Results...)
 			}
 		}
 	}
-	return
+
+	return ret
 }

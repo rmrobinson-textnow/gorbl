@@ -3,6 +3,8 @@ package gorbl
 import (
 	"net"
 	"testing"
+
+	"golang.org/x/net/context"
 )
 
 func TestReverseIP(t *testing.T) {
@@ -12,21 +14,22 @@ func TestReverseIP(t *testing.T) {
 	r := Reverse(ip)
 
 	if r != "1.1.168.192" {
-		t.Errorf("Expected ip to equal 1.1.168.192, actual ", r)
+		t.Errorf("Expected ip to equal 1.1.168.192, actual %s", r)
 	}
-
 }
 
 func TestLookupParams(t *testing.T) {
 	t.Parallel()
+	rblName := "b.barracudacentral.org"
+	rbl := NewRBL(rblName, true)
 
-	res := Lookup("b.barracudacentral.org", "smtp.gmail.com", true)
+	res := rbl.Lookup(context.Background(), "smtp.gmail.com")
 
-	if res.List != "b.barracudacentral.org" {
-		t.Errorf("Expected b.barracudacentral.org, actual ", res.List)
+	if res.List != rblName {
+		t.Errorf("Expected b.barracudacentral.org, actual %s", res.List)
 	}
 
 	if res.Host != "smtp.gmail.com" {
-		t.Errorf("Expected smtp.gmail.com, actual ", res.Host)
+		t.Errorf("Expected smtp.gmail.com, actual %s", res.Host)
 	}
 }
