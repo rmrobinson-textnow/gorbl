@@ -14,11 +14,10 @@ JSON annotations on the types are provided as a convenience.
 package gorbl
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
-
-	"golang.org/x/net/context"
 )
 
 /*
